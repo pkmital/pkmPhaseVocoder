@@ -1,55 +1,107 @@
 /*
  *  pkmPhaseVocoder.h
- *  memoryMosaic
+ *  Phase Vocoder using the Accelerate.framework
+ 
+ *  Created by Parag K. Mital - http://pkmital.com 
+ *  Contact: parag@pkmital.com
  *
- *  Created by Mr. Magoo on 7/5/11.
- *  Copyright 2011 __MyCompanyName__. All rights reserved.
+ *  Copyright 2011 Parag K. Mital. All rights reserved.
+ * 
+ *	Permission is hereby granted, free of charge, to any person
+ *	obtaining a copy of this software and associated documentation
+ *	files (the "Software"), to deal in the Software without
+ *	restriction, including without limitation the rights to use,
+ *	copy, modify, merge, publish, distribute, sublicense, and/or sell
+ *	copies of the Software, and to permit persons to whom the
+ *	Software is furnished to do so, subject to the following
+ *	conditions:
+ *	
+ *	The above copyright notice and this permission notice shall be
+ *	included in all copies or substantial portions of the Software.
+ *
+ *	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,	
+ *	EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ *	OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ *	NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ *	HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ *	WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ *	FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ *	OTHER DEALINGS IN THE SOFTWARE.
  *
  */
 
 #pragma once
 
 #include <Accelerate/Accelerate.h>
+#include "pkmFFT.h"
 
 class pkmPhaseVocoder
 {
 public:
-	pkmPhaseVocoder(int fS = 512)
+	pkmPhaseVocoder(int audioFrameSize = 512)
 	{
-		frameSize = fS;
+		binSize = audioFrameSize / 2;
 		
-		prev_phase_frame = (float *)malloc(sizeof(float) * frameSize);
-		phase_diff = (float *)malloc(sizeof(float) * frameSize);
+		magnitude_frame = (float *)malloc(sizeof(float) * binSize);
+		phase_frame = (float *)malloc(sizeof(float) * binSize);
+		prev_phase_frame = (float *)malloc(sizeof(float) * binSize);
+		phase_diff = (float *)malloc(sizeof(float) * binSize);
 		
 		// expected phase difference
-		expected_phase_diff = (float *)malloc(sizeof(float) * frameSize);
+		expected_phase_diff = (float *)malloc(sizeof(float) * binSize);
 		float a = 0;
 		float b = 1;
-		vDSP_vramp(&a, &b, expected_phase_diff, 1, frameSize);
-		float expct = -2.0f*M_PI*1.0f/(float)frameSize;
-		vDSP_vsmul(expected_phase_diff, 1, &expct, expected_phase_diff, 1, frameSize);
+		vDSP_vramp(&a, &b, expected_phase_diff, 1, binSize);
+		float expct = -2.0f*M_PI*1.0f/(float)binSize;
+		vDSP_vsmul(expected_phase_diff, 1, &expct, expected_phase_diff, 1, binSize);
 		
-		memset(prev_phase_frame, 0, sizeof(float)*frameSize);
-		memset(phase_diff, 0, sizeof(float)*frameSize);
+		memset(prev_phase_frame, 0, sizeof(float)*binSize);
+		memset(phase_diff, 0, sizeof(float)*binSize);
+		
+		fft = new pkmFFT(audioFrameSize);
+		
+		
 		
 	}
 	
-	void correctPhase(float *current_phase_frame)
+	~pkmPhaseVocoder()
 	{
-		// phase vocoder:
-		
+		free(magnitude_frame);
+		free(phase_frame);
+		free(prev_phase_frame);
+		free(phase_diff);
+		free(expected_phase_diff);
+		delete fft;
+	}
+	
+	void correctPhaseInPlace(float *sample_data)
+	{
+		fft.forward(0, sample_data, magnitude_frame, phase_frame);
+		correctPhase(phase_frame);
+		fft.inverse(0, sample_data, magnitude_frame, phase_frame);
+	}
+	
+	void correctPhaseOutOfPlace(float *sample_data_in, float *sample_data_out)
+	{
+		fft.forward(0, sample_data_in, magnitude_frame, phase_frame);
+		correctPhase(phase_frame);
+		fft.inverse(0, sample_data_out, magnitude_frame, phase_frame);
+	}
+	
+	void correctPhase(float *phase_frame)
+	{	
 		// get phase diff
-		vDSP_vsub(current_phase_frame, 1, prev_phase_frame, 1, phase_diff, 1, frameSize);
+		vDSP_vsub(current_phase_frame, 1, prev_phase_frame, 1, phase_diff, 1, binSize);
 		// store prev phase diff
 		cblas_scopy(frameSize, current_phase_frame, 1, prev_phase_frame, 1);
 		
 		// subtract expected phase difference
-		vDSP_vadd(phase_diff, 1, expected_phase_diff, 1, phase_diff, 1, frameSize);
+		vDSP_vadd(phase_diff, 1, expected_phase_diff, 1, phase_diff, 1, binSize);
 		
 		// wrap to +/- PI and accumulate phase diff for reconstruction
 		int i = 1;
 		current_phase_frame[0] = phase_diff[0];
-		while (i < frameSize) {
+		while (i < binSize) {
 			float *tmp = phase_diff + i;
 			int qpd = *tmp/M_PI;
 			if (qpd >= 0) 
@@ -65,7 +117,9 @@ public:
 		
 	}
 	
-	int frameSize;
-	float *expected_phase_diff, *prev_phase_frame, *phase_diff;
+	pkmFFT *fft;
+	int binSize;
+	float *expected_phase_diff, *prev_phase_frame, *phase_diff, *phase_frame, *magnitude_frame;
+	float *phase_frame;
 
 };
