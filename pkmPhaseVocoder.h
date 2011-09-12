@@ -35,6 +35,10 @@
 #include <Accelerate/Accelerate.h>
 #include "pkmFFT.h"
 
+#ifndef M_2_PI
+#define M_2_PI 6.283185307179586
+#endif
+
 class pkmPhaseVocoder
 {
 public:
@@ -52,15 +56,13 @@ public:
 		float a = 0;
 		float b = 1;
 		vDSP_vramp(&a, &b, expected_phase_diff, 1, binSize);
-		float expct = -2.0f*M_PI*1.0f/(float)binSize;
+		float expct = M_2_PI/(float)binSize;
 		vDSP_vsmul(expected_phase_diff, 1, &expct, expected_phase_diff, 1, binSize);
 		
 		memset(prev_phase_frame, 0, sizeof(float)*binSize);
 		memset(phase_diff, 0, sizeof(float)*binSize);
 		
 		fft = new pkmFFT(audioFrameSize);
-		
-		
 		
 	}
 	
@@ -76,24 +78,24 @@ public:
 	
 	void correctPhaseInPlace(float *sample_data)
 	{
-		fft.forward(0, sample_data, magnitude_frame, phase_frame);
+		fft->forward(0, sample_data, magnitude_frame, phase_frame, false);
 		correctPhase(phase_frame);
-		fft.inverse(0, sample_data, magnitude_frame, phase_frame);
+		fft->inverse(0, sample_data, magnitude_frame, phase_frame, false);
 	}
 	
 	void correctPhaseOutOfPlace(float *sample_data_in, float *sample_data_out)
 	{
-		fft.forward(0, sample_data_in, magnitude_frame, phase_frame);
+		fft->forward(0, sample_data_in, magnitude_frame, phase_frame, false);
 		correctPhase(phase_frame);
-		fft.inverse(0, sample_data_out, magnitude_frame, phase_frame);
+		fft->inverse(0, sample_data_out, magnitude_frame, phase_frame, false);
 	}
 	
-	void correctPhase(float *phase_frame)
+	void correctPhase(float *current_phase_frame)
 	{	
 		// get phase diff
 		vDSP_vsub(current_phase_frame, 1, prev_phase_frame, 1, phase_diff, 1, binSize);
 		// store prev phase diff
-		cblas_scopy(frameSize, current_phase_frame, 1, prev_phase_frame, 1);
+		cblas_scopy(binSize, current_phase_frame, 1, prev_phase_frame, 1);
 		
 		// subtract expected phase difference
 		vDSP_vadd(phase_diff, 1, expected_phase_diff, 1, phase_diff, 1, binSize);
@@ -102,16 +104,19 @@ public:
 		int i = 1;
 		current_phase_frame[0] = phase_diff[0];
 		while (i < binSize) {
+			
 			float *tmp = phase_diff + i;
+			*tmp = *tmp - M_2_PI * roundf(*tmp/(M_2_PI));
+			/*
 			int qpd = *tmp/M_PI;
 			if (qpd >= 0) 
 				qpd += qpd&1;
 			else 
 				qpd -= qpd&1;
 			*tmp -= M_PI*(float)qpd;
+			*/
 			
-			current_phase_frame[i] = phase_diff[i] + current_phase_frame[i-1];
-			
+			current_phase_frame[i] = *tmp + current_phase_frame[i];
 			i++;
 		}
 		
@@ -120,6 +125,5 @@ public:
 	pkmFFT *fft;
 	int binSize;
 	float *expected_phase_diff, *prev_phase_frame, *phase_diff, *phase_frame, *magnitude_frame;
-	float *phase_frame;
 
 };
